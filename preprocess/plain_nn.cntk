@@ -1,0 +1,185 @@
+# Plain feedforward network
+
+
+precision = "float"; traceLevel = 1 ; deviceId = "auto"
+
+dataDir = "../DataSet/XXX"
+ModelDir = "./model"
+OutDir = "./output"
+
+trainFile = "$dataDir$/train_cntk_avg.txt"
+validationFile = "$dataDir$/validation_cntk_avg.txt"
+testFile = "$dataDir$/validation_cntk_avg.txt"
+
+modelPath = "$ModelDir$/plain_nn"
+predictionPath = "$OutDir$/prediction"
+
+# Command
+command = Train:Eval:WriteTest
+
+QDim = 100 # $DDim$ * 1
+DDim = 100
+NumHiddenNodes=40
+
+
+Train = {
+    action = "train"
+
+    BrainScriptNetworkBuilder = {
+        # Constants scalars
+        numHiddenNodes      = $NumHiddenNodes$
+        segEmbedDim         = 10
+
+        # Constant tensors
+        POSITIVE_W          = Constant(1.0)
+        BASE_W              = Constant(1.0)
+
+        # Inputs
+        Q   = Input($QDim$)
+        D   = Input($DDim$)
+        L   = Input(1)
+
+        # embeding layer
+        q_d = Splice(Q:D, axis=2)
+
+        nn   = Sequential (
+                    DenseLayer {numHiddenNodes} : Tanh : Dropout :
+                    # DenseLayer {numHiddenNodes} : Tanh :
+                    DenseLayer {1} : Sigmoid)
+
+        score   = nn(q_d)
+        w = L .* POSITIVE_W + BASE_W
+        ce  = WeightedLogistic(L, score, w)
+        errs = SquareError(L, score)
+
+        # connect to system
+        criterionNodes  = (ce)
+        evaluationNodes = (errs)
+        outputNodes = (score)
+    }
+
+    SGD = {
+        epochSize = 0
+        minibatchSize = 256
+        # CNTK weights new gradient by (1-momentum) for unit gain, thus we divide Caffe's learning rate by (1-momentum)
+        learningRatesPerSample = 0.000781*10:0.000483*10:0.000298*10:0.000184*10:0.000114*10:0.000070*10:0.000044*10:0.000027*10:0.000017*10:0.000010*10:0.000006*10:0.000004*10:0.000002*10
+        momentumPerMB = 0.9
+        maxEpochs = 62
+        gradUpdateType = None
+        # CNTK L2 regularization is per sample, thus same as Caffe
+        # L2RegWeight = 0.005 
+        dropoutRate = 0*1:0.5
+        numMBsToShowResult = 128
+
+        # autoAdjust = {
+        #     autoAdjustLR = "adjustAfterEpoch"
+        #     autoAdjustMinibatch = false
+
+        #     # for autoAdjustLR = "adjustAfterEpoch":
+        #     reduceLearnRateIfImproveLessThan = 0
+        #     learnRateDecreaseFactor = 0.618
+        #     increaseLearnRateIfImproveMoreThan = 0.01
+        #     learnRateIncreaseFactor = 1.382
+        #     loadBestModel = false
+        #     learnRateAdjustInterval = 1
+        #     useCVSetControlLRIfCVExists = false
+        #     useEvalCriterionControlLR = false
+
+        #     # for autoAdjustLR = "searchBeforeEpoch":
+        #     numSamples4Search = 80
+        #     numPrevLearnRates = 5
+        #     numBestSearchEpoch = 4
+
+        #     # for autoAdjustMinibatch = true:
+        #     numSamples4Search = 80
+        #     minibatchSizeTuningFrequency = 1
+        #     minibatchSizeTuningMax = 1048576
+        #     minibatchSearchCriterionErrorMargin = 1            
+        # }                         
+    }
+
+    reader = {
+        readerType = "CNTKTextFormatReader"
+        file = "$trainFile$"
+        randomize = true
+        
+        input = {
+            Q   = { dim = $QDim$; format = "Dense" }
+            D   = { dim = $DDim$; format = "Dense" }
+            L   = { dim = 1; format = "Dense" }
+        }
+    }
+	
+    cvReader = {
+        readerType = "CNTKTextFormatReader"
+        file = "$validationFile$"
+        randomize = true
+        
+        input = {
+            Q   = { dim = $QDim$; format = "Dense" }
+            D   = { dim = $DDim$; format = "Dense" }
+            L   = { dim = 1; format = "Dense" }
+        }
+    }	
+}
+
+# validate
+Validate = {
+    action = "cv"
+    minibatchSize = 256
+    evalNodeNames = errs  
+    crossValidationInterval = 3:1:124
+
+    reader = {
+        readerType = "CNTKTextFormatReader"
+        file = "$validationFile$"
+
+        input = {
+            Q   = { dim = $QDim$; format = "Dense" }
+            D   = { dim = $DDim$; format = "Dense" }
+            L   = { dim = 1; format = "Dense" }
+        }
+    }
+}
+
+# Eval action
+Eval = {
+    action = "eval"
+    minibatchSize = 256
+    evalNodeNames = errs 
+
+    reader = {
+        readerType = "CNTKTextFormatReader"
+        file = "$testFile$"
+
+        input = {
+            Q   = { dim = $QDim$; format = "Dense" }
+            D   = { dim = $DDim$; format = "Dense" }
+            L   = { dim = 1; format = "Dense" }
+        }
+    }
+}
+
+# Write network output for entire test data set
+WriteTest = {
+    action = "write"
+    minibatchSize = 256
+    
+    BrainScriptNetworkBuilder = (
+        BS.Network.Load ("$modelPath$")
+    )
+
+    outputPath="$predictionPath$"
+
+    reader = {
+        readerType = "CNTKTextFormatReader"
+        randomize = false
+        file = "$testFile$"
+
+        input = {
+            Q   = { dim = $QDim$; format = "Dense" }
+            D   = { dim = $DDim$; format = "Dense" }
+            L   = { dim = 1; format = "Dense" }
+        }
+    }
+}

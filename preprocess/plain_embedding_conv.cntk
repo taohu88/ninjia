@@ -1,0 +1,209 @@
+# Basic embedding cntk configuration
+
+precision = "float"; traceLevel = 1 ; deviceId = "auto"
+
+dataDir = "../DataSet/XXX"
+ModelDir = "./model"
+OutDir = "./output"
+
+trainFile = "$dataDir$/Train.tsv"
+validationFile = "$dataDir$/Validation.tsv"
+testFile = "$dataDir$/Test.tsv"
+
+modelPath = "$ModelDir$/plain_nn"
+predictionPath = "$OutDir$/prediction"
+
+# Command
+command = Train:Eval:WriteTest
+
+DDIM = 5047
+FDim = 1
+EMBEDDING_DIM = 100
+NUM_HIDDEN_NODES = 16
+MAX_EPOCHES = 124
+
+Train = {
+    action = "train"
+
+    BrainScriptNetworkBuilder = {
+        # Constants scalars
+        numHiddenNodes      = $NUM_HIDDEN_NODES$
+
+        # Inputs
+        D    = Input($DDIM$)
+        QS   = Input($DDIM$)
+        QC   = Input($DDIM$)
+        F   = Input($FDim$)
+        L   = Input(1)
+
+
+        # define affine layer without input infer
+        AffineLayer {outDim, inDim} =
+        {
+            W = ParameterTensor {(outDim:inDim), init='glorotUniform'}
+            b = ParameterTensor {outDim, initValue=0}
+            apply (x) = W * x + b
+        }.apply
+
+        x1 = Splice(D:QS:QC)
+        x2 = FeatureMVNLayer{}(x1)
+        x3 = ReshapeDimension(x2, 1, $DDIM$:3)
+        x4 = AffineLayer {$EMBEDDING_DIM$, $DDIM$}(x3)
+        x5 = TransposeDimensions(ReshapeDimension(x4, 1, $EMBEDDING_DIM$:1), 1, 3)
+
+        LeftBranch  = Sequential (
+                    BatchNormalizationLayer {} : ReLU : Dropout :
+                    ConvolutionalLayer {$EMBEDDING_DIM$ / 2, (3:1), pad=false, activation=Tanh} : Dropout :
+                    DenseLayer {numHiddenNodes, activation=Tanh} : Dropout
+                    )
+
+        lEncoding = LeftBranch(x5)
+        features = Splice(lEncoding:F)
+
+        # simple logistic regression on the top
+        score = DenseLayer {1, activation=Sigmoid}(features)
+
+        ce  = Logistic(L, score)
+        errs = SquareError(L, score)
+
+        # connect to system
+        criterionNodes  = (ce)
+        evaluationNodes = (errs)
+        outputNodes = (score)
+    }
+
+    SGD = {
+        epochSize = 0
+        minibatchSize = 256
+        # CNTK weights new gradient by (1-momentum) for unit gain, thus we divide Caffe's learning rate by (1-momentum)
+        learningRatesPerSample = 0.0007813*10:0.0004828*10:0.0002984*10:0.0001844*10:0.0001140*10:0.0000704*10:0.0000435*10:0.0000269*10:0.0000166*10:0.0000103*10:0.0000063*10:0.0000039*10:0.0000024*10
+        momentumPerMB = 0.9
+        maxEpochs = $MAX_EPOCHES$
+        gradUpdateType = None
+        # CNTK L2 regularization is per sample, thus same as Caffe
+        # L2RegWeight = 0.005 
+        dropoutRate = 0*1:0.5
+        numMBsToShowResult = 128
+
+        # autoAdjust = {
+        #     autoAdjustLR = "adjustAfterEpoch"
+        #     autoAdjustMinibatch = false
+
+        #     # for autoAdjustLR = "adjustAfterEpoch":
+        #     reduceLearnRateIfImproveLessThan = 0
+        #     learnRateDecreaseFactor = 0.618
+        #     increaseLearnRateIfImproveMoreThan = 0.01
+        #     learnRateIncreaseFactor = 1.382
+        #     loadBestModel = false
+        #     learnRateAdjustInterval = 1
+        #     useCVSetControlLRIfCVExists = false
+        #     useEvalCriterionControlLR = false
+
+        #     # for autoAdjustLR = "searchBeforeEpoch":
+        #     numSamples4Search = 80
+        #     numPrevLearnRates = 5
+        #     numBestSearchEpoch = 4
+
+        #     # for autoAdjustMinibatch = true:
+        #     numSamples4Search = 80
+        #     minibatchSizeTuningFrequency = 1
+        #     minibatchSizeTuningMax = 1048576
+        #     minibatchSearchCriterionErrorMargin = 1            
+        # }                         
+    }
+
+    reader = {
+        readerType = "CNTKTextFormatReader"
+        file = "$trainFile$"
+        randomize = true
+        
+        input = {
+            QS   = {dim = $DDim$; format = "Sparse" }
+            QC   = {dim = $DDim$; format = "Sparse" }
+            D    = {dim = $DDim$; format = "Sparse" }
+            F    = {alias="Features"; dim = $FDim$; format = "Dense" }
+            L    = {alias="Label"; dim = 1; format = "Dense" }
+        }
+    }
+
+    cvReader = {
+        readerType = "CNTKTextFormatReader"
+        file = "$validationFile$"
+        randomize = "None"
+        
+        input = {
+            QS   = {dim = $DDim$; format = "Sparse" }
+            QC   = {dim = $DDim$; format = "Sparse" }
+            D    = {dim = $DDim$; format = "Sparse" }
+            F    = {alias="Features"; dim = $FDim$; format = "Dense" }
+            L    = {alias="Label"; dim = 1; format = "Dense" }
+        }
+    }    
+}
+
+# validate
+Validate = {
+    action = "cv"
+    minibatchSize = 256
+    evalNodeNames = errs  
+    crossValidationInterval = 6:1:30
+
+    reader = {
+        readerType = "CNTKTextFormatReader"
+        file = "$validationFile$"
+
+        input = {
+            QS   = {dim = $DDim$; format = "Sparse" }
+            QC   = {dim = $DDim$; format = "Sparse" }
+            D    = {dim = $DDim$; format = "Sparse" }
+            F    = {alias="Features"; dim = $FDim$; format = "Dense" }
+            L    = {alias="Label"; dim = 1; format = "Dense" }
+        }
+    }
+}
+
+# Eval action
+Eval = {
+    action = "eval"
+    minibatchSize = 256
+    evalNodeNames = errs 
+
+    reader = {
+        readerType = "CNTKTextFormatReader"
+        file = "$testFile$"
+
+        input = {
+            QS   = {dim = $DDim$; format = "Sparse" }
+            QC   = {dim = $DDim$; format = "Sparse" }
+            D    = {dim = $DDim$; format = "Sparse" }
+            F    = {alias="Features"; dim = $FDim$; format = "Dense" }
+            L    = {alias="Label"; dim = 1; format = "Dense" }
+        }
+    }
+}
+
+# Write network output for entire test data set
+WriteTest = {
+    action = "write"
+    minibatchSize = 256
+    
+    BrainScriptNetworkBuilder = (
+        BS.Network.Load ("$modelPath$")
+    )
+
+    outputPath="$predictionPath$"
+
+    reader = {
+        readerType = "CNTKTextFormatReader"
+        randomize = false
+        file = "$testFile$"
+
+        input = {
+            QS   = {dim = $DDim$; format = "Sparse" }
+            QC   = {dim = $DDim$; format = "Sparse" }
+            D    = {dim = $DDim$; format = "Sparse" }
+            F    = {alias="Features"; dim = $FDim$; format = "Dense" }
+            L    = {alias="Label"; dim = 1; format = "Dense" }
+        }
+    }
+}
