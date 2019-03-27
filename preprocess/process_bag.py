@@ -24,7 +24,6 @@ def load_term_dictionary(text_file):
     return stoi, itos
 
 
-
 def process_file(ifile, ofile, sep=';', has_header=1, print_freq=1000):
     print('loading input data from file %s' % ifile)
     print('writing output to file %s' % ofile)
