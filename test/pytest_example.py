@@ -8,8 +8,7 @@ def test_pass():
 def test_equal():
     actual = [1, 2, 3]
     expected = [1, 2, 3]
-    print(f"actual is {actual}")
-    assert expected == actual
+    assert expected == actual, f'{actual}'
 
 
 class TestSomeStuff():
