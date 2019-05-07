@@ -1,3 +1,6 @@
+import pytest
+
+
 def test_pass():
     print("Test 1")
 
@@ -15,3 +18,11 @@ class TestSomeStuff():
 
     def test_four(self):
         assert [1, 2] == [1, 2]
+
+
+@pytest.mark.parametrize('x, y', [
+    (1, 2),
+    (3, 4)
+])
+def test_param1(x, y):
+    pass
