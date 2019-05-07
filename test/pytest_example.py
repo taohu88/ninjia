@@ -7,5 +7,3 @@ def test_equal():
     expected = [1, 2, 3]
     print(f"actual is {actual}")
     assert expected == actual
-
-
